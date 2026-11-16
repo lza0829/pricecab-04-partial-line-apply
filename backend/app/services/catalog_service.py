@@ -27,6 +27,9 @@ def dashboard() -> dict[str, Any]:
             "applied_count": conn.execute(
                 "SELECT COUNT(*) c FROM price_tickets WHERE status='applied'"
             ).fetchone()["c"],
+            "failed_count": conn.execute(
+                "SELECT COUNT(*) c FROM price_tickets WHERE status='failed'"
+            ).fetchone()["c"],
             "book_count": conn.execute("SELECT COUNT(*) c FROM price_book").fetchone()["c"],
             "sale_count": conn.execute("SELECT COUNT(*) c FROM sales_fixture").fetchone()["c"],
             "batch_count": conn.execute("SELECT COUNT(*) c FROM apply_batches").fetchone()["c"],

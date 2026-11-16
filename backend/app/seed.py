@@ -38,7 +38,8 @@ def init_schema(conn) -> None:
           note TEXT,
           created_at TEXT NOT NULL,
           applied_at TEXT,
-          apply_batch_id INTEGER
+          apply_batch_id INTEGER,
+          apply_error TEXT
         );
         CREATE TABLE IF NOT EXISTS price_ticket_lines (
           id INTEGER PRIMARY KEY,
@@ -53,6 +54,10 @@ def init_schema(conn) -> None:
           clock_at TEXT NOT NULL,
           ticket_count INTEGER NOT NULL,
           line_count INTEGER NOT NULL,
+          applied_ticket_count INTEGER NOT NULL DEFAULT 0,
+          failed_ticket_count INTEGER NOT NULL DEFAULT 0,
+          applied_line_count INTEGER NOT NULL DEFAULT 0,
+          failed_line_count INTEGER NOT NULL DEFAULT 0,
           status TEXT NOT NULL,
           created_at TEXT NOT NULL
         );
@@ -87,6 +92,23 @@ def init_schema(conn) -> None:
         );
         '''
     )
+    _migrate(conn)
+
+
+def _migrate(conn) -> None:
+    """Add columns introduced after the first schema to pre-existing databases."""
+    ticket_cols = {r["name"] for r in conn.execute("PRAGMA table_info(price_tickets)").fetchall()}
+    if "apply_error" not in ticket_cols:
+        conn.execute("ALTER TABLE price_tickets ADD COLUMN apply_error TEXT")
+    batch_cols = {r["name"] for r in conn.execute("PRAGMA table_info(apply_batches)").fetchall()}
+    for col in (
+        "applied_ticket_count",
+        "failed_ticket_count",
+        "applied_line_count",
+        "failed_line_count",
+    ):
+        if col not in batch_cols:
+            conn.execute(f"ALTER TABLE apply_batches ADD COLUMN {col} INTEGER NOT NULL DEFAULT 0")
 
 
 def seed_if_empty() -> None:

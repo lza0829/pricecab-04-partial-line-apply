@@ -32,6 +32,7 @@ onMounted(async () => {
     <div class="stat"><div class="label">改价单</div><div class="value">{{ dash.ticket_count }}</div></div>
     <div class="stat"><div class="label">待生效</div><div class="value">{{ dash.scheduled_count }}</div></div>
     <div class="stat"><div class="label">已应用</div><div class="value">{{ dash.applied_count }}</div></div>
+    <div class="stat"><div class="label">应用失败</div><div class="value">{{ dash.failed_count }}</div></div>
     <div class="stat"><div class="label">到期待应用</div><div class="value">{{ dash.due_now }}</div></div>
   </div>
 </template>

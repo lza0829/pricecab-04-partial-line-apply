@@ -33,3 +33,8 @@ def get_ticket(ticket_id: int):
 @router.post("")
 def create_ticket(body: TicketCreateIn):
     return svc.create_ticket(body.model_dump())
+
+
+@router.post("/{ticket_id}/lines", status_code=201)
+def add_line(ticket_id: int, body: TicketLineIn):
+    return svc.add_line(ticket_id, body.model_dump())

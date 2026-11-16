@@ -1,5 +1,5 @@
 <script setup>
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { api } from '../api'
 
 const skus = ref([])
@@ -15,10 +15,19 @@ const form = reactive({
 })
 const lines = ref([])
 
+const STATUS_TAG = { applied: 'ok', scheduled: 'warn', applying: 'muted', failed: 'bad' }
+
+const scheduledTickets = computed(() => tickets.value.filter((t) => t.status === 'scheduled'))
+const lineForm = reactive({ ticket_id: '', sku_code: '', new_price: '' })
+
 async function refresh() {
   skus.value = await api.skus()
   tickets.value = await api.tickets()
   if (!form.sku_code && skus.value.length) form.sku_code = skus.value[0].sku_code
+  if (!lineForm.sku_code && skus.value.length) lineForm.sku_code = skus.value[0].sku_code
+  if (!lineForm.ticket_id && scheduledTickets.value.length) {
+    lineForm.ticket_id = scheduledTickets.value[0].id
+  }
 }
 
 function addLine() {
@@ -51,6 +60,27 @@ async function submit() {
     lines.value = []
     await refresh()
   } catch (e) {
+    err.value = e.message
+  }
+}
+
+async function submitLine() {
+  msg.value = ''
+  err.value = ''
+  if (!lineForm.ticket_id || !lineForm.sku_code || lineForm.new_price === '') {
+    err.value = '请选择改价单、商品并填写新价'
+    return
+  }
+  try {
+    const t = await api.addLine(lineForm.ticket_id, {
+      sku_code: lineForm.sku_code,
+      new_price: Number(lineForm.new_price),
+    })
+    msg.value = `已向 ${t.ticket_no} 追加 1 行明细`
+    lineForm.new_price = ''
+    await refresh()
+  } catch (e) {
+    // 应用中（applying）或已完结的单会在此被 409 拒绝
     err.value = e.message
   }
 }
@@ -101,10 +131,37 @@ onMounted(() => refresh().catch((e) => (err.value = e.message)))
   </div>
 
   <div class="panel">
+    <h2>追加明细（仅 scheduled 单）</h2>
+    <p style="color:var(--muted);font-size:0.85rem">
+      到期应用进行中的单（applying）与已完结的单（applied / failed）会被拒绝修改明细（409）。
+    </p>
+    <div class="row">
+      <div class="field">
+        <label>改价单</label>
+        <select v-model="lineForm.ticket_id">
+          <option v-for="t in scheduledTickets" :key="t.id" :value="t.id">
+            {{ t.ticket_no }} · {{ t.title }}
+          </option>
+        </select>
+      </div>
+      <div class="field">
+        <label>商品</label>
+        <select v-model="lineForm.sku_code">
+          <option v-for="s in skus" :key="s.sku_code" :value="s.sku_code">
+            {{ s.sku_code }} · {{ s.title }}（现价 {{ s.current_price }}）
+          </option>
+        </select>
+      </div>
+      <div class="field"><label>新价</label><input v-model="lineForm.new_price" type="number" step="0.01" /></div>
+      <button class="btn ghost" type="button" @click="submitLine">追加明细</button>
+    </div>
+  </div>
+
+  <div class="panel">
     <h2>改价单列表</h2>
     <table>
       <thead>
-        <tr><th>单号</th><th>标题</th><th>生效时刻</th><th>行数</th><th>状态</th><th>已应用批次</th></tr>
+        <tr><th>单号</th><th>标题</th><th>生效时刻</th><th>行数</th><th>状态</th><th>失败原因</th><th>已应用批次</th></tr>
       </thead>
       <tbody>
         <tr v-for="t in tickets" :key="t.id">
@@ -113,8 +170,9 @@ onMounted(() => refresh().catch((e) => (err.value = e.message)))
           <td>{{ t.effective_at }}</td>
           <td>{{ t.line_count }}</td>
           <td>
-            <span class="tag" :class="t.status === 'applied' ? 'ok' : 'warn'">{{ t.status }}</span>
+            <span class="tag" :class="STATUS_TAG[t.status] || 'warn'">{{ t.status }}</span>
           </td>
+          <td style="font-size:0.82rem;color:var(--muted)">{{ t.apply_error || '—' }}</td>
           <td>{{ t.apply_batch_id || '—' }}</td>
         </tr>
       </tbody>

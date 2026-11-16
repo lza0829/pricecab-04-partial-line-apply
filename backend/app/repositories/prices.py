@@ -16,7 +16,11 @@ def list_book(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     return [dict(r) for r in rows]
 
 
-def upsert_book(
+class PriceBookMissing(Exception):
+    """应用改价时找不到对应商品的价签本。"""
+
+
+def apply_book_line(
     conn: sqlite3.Connection,
     *,
     sku_code: str,
@@ -25,17 +29,24 @@ def upsert_book(
     effective_at: str,
     updated_at: str,
 ) -> None:
+    """Write one ticket line into the price book and history.
+
+    The price book row must already exist; a missing row is a line failure
+    (找不到价签本) and raises PriceBookMissing so the caller can roll back the
+    whole ticket. Any database error likewise propagates as a write failure.
+    """
+    row = conn.execute(
+        "SELECT sku_code FROM price_book WHERE sku_code=?", (sku_code,)
+    ).fetchone()
+    if row is None:
+        raise PriceBookMissing(f"商品 {sku_code} 找不到价签本")
     conn.execute(
         '''
-        INSERT INTO price_book(sku_code, current_price, source_ticket_no, effective_at, updated_at)
-        VALUES (?,?,?,?,?)
-        ON CONFLICT(sku_code) DO UPDATE SET
-          current_price=excluded.current_price,
-          source_ticket_no=excluded.source_ticket_no,
-          effective_at=excluded.effective_at,
-          updated_at=excluded.updated_at
+        UPDATE price_book
+        SET current_price=?, source_ticket_no=?, effective_at=?, updated_at=?
+        WHERE sku_code=?
         ''',
-        (sku_code, price, ticket_no, effective_at, updated_at),
+        (price, ticket_no, effective_at, updated_at, sku_code),
     )
     conn.execute(
         '''

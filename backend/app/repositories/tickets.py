@@ -74,13 +74,47 @@ def list_lines(conn: sqlite3.Connection, ticket_id: int) -> list[dict[str, Any]]
 
 
 def due_tickets(conn: sqlite3.Connection, clock_at: str) -> list[dict[str, Any]]:
+    """Tickets due at the business clock. Failed tickets stay retriable: a failed
+    whole-ticket rollback leaves the ticket non-applied, so the next apply run
+    picks it up again once its effective_at is due."""
     rows = conn.execute(
         '''
         SELECT * FROM price_tickets
-        WHERE status='scheduled' AND effective_at <= ?
+        WHERE status IN ('scheduled','failed') AND effective_at <= ?
         ORDER BY effective_at, id
         ''',
         (clock_at,),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def reclaim_interrupted(conn: sqlite3.Connection) -> int:
+    """Tickets left in 'applying' belong to an interrupted apply run (the apply
+    lock guarantees no live run while we hold it). Their ticket transaction was
+    rolled back, so mark them failed and let them be retried."""
+    cur = conn.execute(
+        '''
+        UPDATE price_tickets
+        SET status='failed', apply_error='上一次应用中断，本单已整单回滚，可再次到期应用'
+        WHERE status='applying'
+        ''',
+    )
+    return cur.rowcount
+
+
+def claim_due(conn: sqlite3.Connection, clock_at: str) -> list[dict[str, Any]]:
+    """Move every due ticket to 'applying' in one atomic step and return the
+    claimed tickets. While a ticket is 'applying', line modifications are
+    rejected with 409 by the ticket endpoints."""
+    conn.execute(
+        '''
+        UPDATE price_tickets SET status='applying'
+        WHERE status IN ('scheduled','failed') AND effective_at <= ?
+        ''',
+        (clock_at,),
+    )
+    rows = conn.execute(
+        "SELECT * FROM price_tickets WHERE status='applying' ORDER BY effective_at, id"
     ).fetchall()
     return [dict(r) for r in rows]
 
@@ -95,8 +129,19 @@ def mark_applied(
     conn.execute(
         '''
         UPDATE price_tickets
-        SET status='applied', applied_at=?, apply_batch_id=?
+        SET status='applied', applied_at=?, apply_batch_id=?, apply_error=NULL
         WHERE id=?
         ''',
         (applied_at, batch_id, ticket_id),
+    )
+
+
+def mark_failed(conn: sqlite3.Connection, ticket_id: int, *, error: str) -> None:
+    conn.execute(
+        '''
+        UPDATE price_tickets
+        SET status='failed', apply_error=?
+        WHERE id=?
+        ''',
+        (error, ticket_id),
     )

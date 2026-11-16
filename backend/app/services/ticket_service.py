@@ -88,3 +88,53 @@ def create_ticket(body: dict[str, Any]) -> dict[str, Any]:
         raise
     finally:
         conn.close()
+
+
+def add_line(ticket_id: int, body: dict[str, Any]) -> dict[str, Any]:
+    """Append a line to a scheduled ticket.
+
+    A ticket being applied is claimed as 'applying' for the whole apply run;
+    concurrent line modifications must be rejected (409) so the apply sees a
+    stable set of lines. Applied/failed tickets are closed for changes —
+    failed lines are handled by a new ticket.
+    """
+    sku_code = (body.get("sku_code") or "").strip()
+    new_price = body.get("new_price")
+    if not sku_code:
+        raise HTTPException(400, "明细缺少 sku_code")
+    if new_price is None:
+        raise HTTPException(400, f"{sku_code} 缺少 new_price")
+
+    conn = connect(immediate=True)
+    try:
+        t = ticket_repo.get_ticket(conn, ticket_id)
+        if not t:
+            raise HTTPException(404, "改价单不存在")
+        if t["status"] == "applying":
+            raise HTTPException(409, "改价单正在到期应用中，禁止并发修改明细")
+        if t["status"] != "scheduled":
+            raise HTTPException(409, f"改价单状态为 {t['status']}，仅 scheduled 可追加明细")
+        sku = sku_repo.get_by_code(conn, sku_code)
+        if not sku:
+            raise HTTPException(400, f"未知商品 {sku_code}")
+        book = conn.execute(
+            "SELECT current_price FROM price_book WHERE sku_code=?", (sku_code,)
+        ).fetchone()
+        old_price = float(book["current_price"]) if book else float(sku["list_price"])
+        ticket_repo.add_line(
+            conn,
+            ticket_id=ticket_id,
+            sku_code=sku_code,
+            old_price=old_price,
+            new_price=float(new_price),
+        )
+        conn.commit()
+        return get_ticket(ticket_id)
+    except HTTPException:
+        conn.rollback()
+        raise
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
